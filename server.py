@@ -8,6 +8,7 @@ import workers
 import prometheus_metrics
 
 from collect_json_schema import CollectJSONSchema
+from topology_json_schema import TopologyJSONSchema
 
 
 def create_application():
@@ -15,6 +16,8 @@ def create_application():
     app = Flask(__name__)
     app.config['NEXT_MICROSERVICE_HOST'] = \
         os.environ.get('NEXT_MICROSERVICE_HOST')
+    app.config['DATA_COLLECTION_TYPE'] = \
+        os.environ.get('DATA_COLLECTION_TYPE')
 
     return app
 
@@ -30,6 +33,9 @@ ROUTE_PREFIX = "/r/insights/platform/aiops-data-collector"
 
 # Schema for the Collect API
 SCHEMA = CollectJSONSchema()
+
+# Schema for Topology
+SCHEMA_TOPOLOGY = TopologyJSONSchema()
 
 
 @APP.route(ROUTE_PREFIX, methods=['GET'])
@@ -56,23 +62,58 @@ def get_version():
 def post_collect():
     """Endpoint servicing data collection."""
     input_data = request.get_json(force=True)
-    validation = SCHEMA.load(input_data)
 
-    prometheus_metrics.METRICS['jobs_total'].inc()
-
-    if validation.errors:
-        prometheus_metrics.METRICS['jobs_denied'].inc()
-        return jsonify(
-            status='Error',
-            errors=validation.errors,
-            message='Input payload validation failed'
-        ), 400
+    data_collection_type = APP.config['DATA_COLLECTION_TYPE']
 
     next_service = APP.config['NEXT_MICROSERVICE_HOST']
     source_id = input_data.get('payload_id')
 
-    workers.download_job(input_data['url'], source_id, next_service)
-    APP.logger.info('Job started.')
+    prometheus_metrics.METRICS['jobs_total'].inc()
+
+    if data_collection_type.upper() == 'TOPOLOGY':
+        import topology_inventory
+        username = os.environ.get('USERNAME')
+        password = os.environ.get('PASSWORD')
+        endpoint = os.environ.get('TOPOLOGY_INVENTORY_ENDPOINT')
+
+        validation = SCHEMA_TOPOLOGY.load(
+            {'username': username,
+             'password': password,
+             'endpoint': endpoint
+             }
+        )
+        if validation.errors:
+            prometheus_metrics.METRICS['jobs_denied'].inc()
+            return jsonify(
+                status='Error',
+                errors=validation.errors,
+                message='Input payload validation failed for Topology'
+            ), 400
+
+        topology_client = topology_inventory.TopologyInventoryClient(
+            username,
+            password,
+            endpoint
+        )
+
+        workers.download_topological_inventory_data(
+            topology_client,
+            source_id,
+            next_service
+        )
+        APP.logger.info('Validation using Topological Inventory Job started.')
+    else:
+        validation = SCHEMA.load(input_data)
+        if validation.errors:
+            prometheus_metrics.METRICS['jobs_denied'].inc()
+            return jsonify(
+                status='Error',
+                errors=validation.errors,
+                message='Input payload validation failed'
+            ), 400
+
+        workers.download_job(input_data['url'], source_id, next_service)
+        APP.logger.info('Job started.')
 
     prometheus_metrics.METRICS['jobs_initiated'].inc()
     return jsonify(status="OK", message="Job initiated")
