@@ -30,7 +30,17 @@ VERSION = "0.0.1"
 SCHEMA = CollectJSONSchema()
 
 
-@APP.route("/api/v0/version", methods=['GET'])
+@APP.route("/r/insights/platform/aiops-data-collector", methods=['GET'])
+def get_root():
+    """Root Endpoint for 3scale."""
+    return jsonify(
+        status='OK',
+        version=VERSION,
+        message='Up and Running'
+    )
+
+
+@APP.route("/r/insights/platform/aiops-data-collector/api/v0/version", methods=['GET'])
 def get_version():
     """Endpoint for getting the current version."""
     return jsonify(
@@ -40,7 +50,7 @@ def get_version():
     )
 
 
-@APP.route("/api/v0/collect", methods=['POST'])
+@APP.route("/r/insights/platform/aiops-data-collector/api/v0/collect", methods=['POST'])
 def post_collect():
     """Endpoint servicing data collection."""
     input_data = request.get_json(force=True)
