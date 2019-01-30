@@ -1,7 +1,7 @@
 swagger: '2.0'
 basePath: /
 paths:
-  /api/v0/collect:
+  /r/insights/platform/aiops-data-collector/api/v0/collect:
     post:
       responses:
         '200':
@@ -18,7 +18,16 @@ paths:
             $ref: '#/definitions/CollectJSON'
       tags:
         - default
-  /api/v0/version:
+  /r/insights/platform/aiops-data-collector:
+    get:
+      responses:
+        '200':
+          description: Success
+      summary: Root Endpoint
+      operationId: get_root
+      tags:
+      - default
+  /r/insights/platform/aiops-data-collector/api/v0/version:
     get:
       responses:
         '200':
