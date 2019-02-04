@@ -79,3 +79,9 @@ class TopologyInventoryClient:
         # raised if the end-point is invalid or not JSON compatible
         except json.decoder.JSONDecodeError:
             return None
+
+    def noop(self):
+        """No OP."""
+        # Suppresses R0903 Too few public methods (1/2) [pylint]
+        # This is a temporary addition until we decide how
+        # to suppress this
