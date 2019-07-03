@@ -277,6 +277,10 @@ def topological_inventory_data(
         'data': {}
     }
 
+    if not APP_CONFIG:
+        LOGGER.error('%s: No queries specified', thread.name)
+        return 0
+
     for entity in APP_CONFIG:
         query_spec = QUERIES[entity]
 

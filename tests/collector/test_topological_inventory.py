@@ -1,10 +1,10 @@
-import pytest
-import yaml
 import base64
 import json
-from unittest.mock import ANY
+import yaml
 
-from collector import topological_inventory
+import pytest
+
+from collector import topological_inventory, utils
 
 
 # R0201 = Method could be a function Used when a method doesn't use its bound
@@ -76,7 +76,49 @@ class TestUpdateFk:
 class TestCollectData:
     """Test suite for _collect_data."""
 
-    pass
+    def test_get_single_page(self, mocker):
+        """Collect a single page data."""
+        retryable = mocker.patch.object(utils, 'retryable')
+        page_0 = mocker.Mock()
+        page_0.json.return_value = dict(data=[0, 1, 2], links={})
+        retryable.return_value = page_0
+
+        data = topological_inventory._collect_data(
+            dict(host='host', path='path'), 'url'
+        )
+
+        assert data == [0, 1, 2]
+        retryable.assert_called_once_with(
+            'get', 'host/path/url', headers=None
+        )
+
+    def test_get_multiple_pages(self, mocker):
+        """Collect paginated data."""
+        retryable = mocker.patch.object(utils, 'retryable')
+        page_0, page_1 = mocker.Mock(), mocker.Mock()
+        page_0.json.return_value = {
+            'data': [0, 1, 2],
+            'links': dict(next='/next_page')
+        }
+        page_1.json.return_value = {
+            'data': [3, 4, 5],
+            'links': {}
+        }
+        retryable.side_effect = [page_0, page_1]
+
+        data = topological_inventory._collect_data(
+            dict(host='host', path='path'), 'url'
+        )
+
+        assert retryable.call_count == 2
+        assert data == [0, 1, 2, 3, 4, 5]
+
+        retryable.assert_any_call(
+            'get', 'host/path/url', headers=None
+        )
+        retryable.assert_any_call(
+            'get', 'host/next_page', headers=None
+        )
 
 
 class TestQueryMainCollection:
@@ -99,7 +141,9 @@ class TestQueryMainCollection:
             dict(main_collection='x', **entity)
         )
 
-        mock.assert_called_once_with(expected_service, 'x', headers=ANY)
+        mock.assert_called_once_with(
+            expected_service, 'x', headers=mocker.ANY
+        )
 
     def test_service_fallback(self, monkeypatch, mocker):
         """Ensure invalid service selection falls back to Topological."""
@@ -117,7 +161,7 @@ class TestQueryMainCollection:
         topological_inventory._query_main_collection(entity)
 
         mock.assert_called_once_with(
-            dict(host='topological', path=''), 'x', headers=ANY
+            dict(host='topological', path=''), 'x', headers=mocker.ANY
         )
 
     def test_pass_headers(self, mocker):
@@ -128,7 +172,9 @@ class TestQueryMainCollection:
 
         topological_inventory._query_main_collection(entity, headers)
 
-        mock.assert_called_once_with(ANY, ANY, headers={'header': 'value'})
+        mock.assert_called_once_with(
+            mocker.ANY, mocker.ANY, headers={'header': 'value'}
+        )
 
     def test_missing_main_collection(self):
         """Should raise KeyError when main_collection is not present."""
@@ -162,7 +208,8 @@ class TestQuerySubCollection:
         topological_inventory._query_sub_collection(entity, data)
 
         mock.assert_called_once_with(
-            expected_service, ANY, ANY, ANY, headers=ANY
+            expected_service, mocker.ANY, mocker.ANY,
+            mocker.ANY, headers=mocker.ANY
         )
 
     def test_service_fallback(self, monkeypatch, mocker):
@@ -186,7 +233,8 @@ class TestQuerySubCollection:
         topological_inventory._query_sub_collection(entity, data)
 
         mock.assert_called_once_with(
-            dict(host='topological', path=''), ANY, ANY, ANY, headers=ANY
+            dict(host='topological', path=''),
+            mocker.ANY, mocker.ANY, mocker.ANY, headers=mocker.ANY
         )
 
     def test_pass_headers(self, mocker):
@@ -203,7 +251,8 @@ class TestQuerySubCollection:
         topological_inventory._query_sub_collection(entity, data, headers)
 
         mock.assert_called_once_with(
-            ANY, ANY, ANY, ANY, headers={'header': 'value'}
+            mocker.ANY, mocker.ANY, mocker.ANY, mocker.ANY,
+            headers={'header': 'value'}
         )
 
     def test_called_for_every_entry(self, mocker):
@@ -235,7 +284,6 @@ class TestQuerySubCollection:
         with pytest.raises(KeyError):
             topological_inventory._query_sub_collection(entity, {})
 
-
     def test_url_format(self, mocker):
         """Subcollection URL should be formed properly."""
         entity = dict(
@@ -250,20 +298,143 @@ class TestQuerySubCollection:
         topological_inventory._query_sub_collection(entity, data)
 
         mock.assert_called_once_with(
-            ANY, 'x/1/y', ANY, ANY, headers=ANY
+            mocker.ANY, 'x/1/y', mocker.ANY, mocker.ANY, headers=mocker.ANY
         )
 
 
 class TestWorker:
     """Test suite for worker."""
 
-    pass
+    def test_all_tenants(self):
+        """TBD."""
+
+    def test_single_account(self):
+        """TBD."""
 
 
 class TestTopologicalInventoryData:
     """Test suite for topological_inventory_data."""
 
-    pass
+    @pytest.fixture(autouse=True)
+    def default_setup(self, mocker, monkeypatch):
+        """Set mocker and QUERIES before every test run."""
+        # pylama: ignore=W0201
+        self.query_main = mocker.patch.object(
+            topological_inventory, '_query_main_collection'
+        )
+        self.query_sub = mocker.patch.object(
+            topological_inventory, '_query_sub_collection'
+        )
+        self.retryable = mocker.patch.object(utils, 'retryable')
+        self.thread = mocker.Mock(name='thread')
+
+        monkeypatch.setattr(
+            topological_inventory, 'QUERIES', {
+                'a': {
+                    'main_collection': 'a'
+                },
+                'b': {
+                    'main_collection': 'b'
+                },
+                'sub_of_a': {
+                    'sub_collection': 'sub',
+                    'main_collection': 'a',
+                    'foreign_key': 'a_id'
+                }
+            }
+        )
+
+    def test_no_collections(self, monkeypatch):
+        """Should not call next service if no queries are specified."""
+        monkeypatch.setattr(topological_inventory, 'APP_CONFIG', [])
+
+        size = topological_inventory.topological_inventory_data(
+            None, 'stub_id', 'dest', {}, self.thread
+        )
+
+        self.retryable.assert_not_called()
+        assert size == 0
+
+    def test_invalid_collection(self, monkeypatch):
+        """Should raise if collection is not present in QUERIES."""
+        monkeypatch.setattr(topological_inventory, 'APP_CONFIG', ['c'])
+
+        with pytest.raises(KeyError):
+            topological_inventory.topological_inventory_data(
+                None, 'stub_id', 'dest', {}, self.thread
+            )
+
+    def test_main_collections(self, monkeypatch):
+        """Collect a main collection only."""
+        monkeypatch.setattr(topological_inventory, 'APP_CONFIG', ['a'])
+        self.query_main.return_value = [0, 1]
+
+        topological_inventory.topological_inventory_data(
+            None, 'stub_id', 'dest', {}, self.thread
+        )
+
+        self.query_main.assert_called_once_with(
+            dict(main_collection='a'), headers={}
+        )
+        self.query_sub.assert_not_called()
+        self.retryable.assert_called_once_with(
+            'post', 'dest', headers={},
+            json={
+                'id': 'stub_id',
+                'data': dict(a=[0, 1])
+            }
+        )
+
+    def test_sub_collections(self, monkeypatch, mocker):
+        """Collect a sub collection only."""
+        monkeypatch.setattr(topological_inventory, 'APP_CONFIG', ['sub_of_a'])
+        self.query_sub.return_value = [0, 1]
+
+        topological_inventory.topological_inventory_data(
+            None, 'stub_id', 'dest', {}, self.thread
+        )
+
+        self.query_main.assert_not_called()
+        self.query_sub.assert_called_once_with(
+            {
+                'main_collection': 'a',
+                'sub_collection': 'sub',
+                'foreign_key': 'a_id'
+            },
+            # _query_sub_collection is called with mutable data['data']
+            mocker.ANY,
+            headers={}
+        )
+        self.retryable.assert_called_once_with(
+            'post', 'dest', headers={},
+            json={
+                'id': 'stub_id',
+                'data': dict(sub_of_a=[0, 1])
+            }
+        )
+
+    @pytest.mark.parametrize('main,sub,calls', [
+        ([[], ['b_item']], [['sub_of_a_item']], [1, 0]),
+        ([['a_item'], []], [['sub_of_a_item']], [2, 0]),
+        ([['a_item'], ['b_item']], [[]], [2, 1]),
+    ])
+    def test_no_data(self, monkeypatch, main, sub, calls):
+        """Should return if any collection is empty."""
+        monkeypatch.setattr(
+            topological_inventory, 'APP_CONFIG',
+            ['a', 'b', 'sub_of_a']
+        )
+
+        self.query_main.side_effect = main
+        self.query_sub.side_effect = sub
+
+        size = topological_inventory.topological_inventory_data(
+            None, 'stub_id', 'dest', {}, self.thread
+        )
+        assert self.query_main.call_count == calls[0]
+        assert self.query_sub.call_count == calls[1]
+        assert size == 0
+        self.retryable.assert_not_called()
 
 
 class TestTenantHeaderInfo:
