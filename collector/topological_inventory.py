@@ -284,30 +284,22 @@ def topological_inventory_data(
     for entity in APP_CONFIG:
         query_spec = QUERIES[entity]
 
-        if query_spec.get('sub_collection'):
-            try:
+        try:
+            if query_spec.get('sub_collection'):
                 all_data = _query_sub_collection(
                     query_spec,
                     data['data'],
                     headers=headers
                 )
-            except utils.RetryFailedError as exception:
-                prometheus_metrics.METRICS['get_errors'].inc()
-                LOGGER.error(
-                    '%s: Unable to fetch source data for "%s": %s',
-                    thread.name, source_id, exception
-                )
-                return 0
-        else:
-            try:
+            else:
                 all_data = _query_main_collection(query_spec, headers=headers)
-            except utils.RetryFailedError as exception:
-                prometheus_metrics.METRICS['get_errors'].inc()
-                LOGGER.error(
-                    '%s: Unable to fetch source data for "%s": %s',
-                    thread.name, source_id, exception
-                )
-                return 0
+        except utils.RetryFailedError as exception:
+            prometheus_metrics.METRICS['get_errors'].inc()
+            LOGGER.error(
+                '%s: Unable to fetch source data for "%s": %s',
+                thread.name, source_id, exception
+            )
+            return 0
 
         LOGGER.info(
             '%s: %s: %s\t%s',
