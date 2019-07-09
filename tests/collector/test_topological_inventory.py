@@ -305,11 +305,56 @@ class TestQuerySubCollection:
 class TestWorker:
     """Test suite for worker."""
 
-    def test_all_tenants(self):
-        """TBD."""
+    def test_all_tenants(self, monkeypatch, mocker):
+        """All tenants should be collected if the switch is set."""
+        monkeypatch.setattr(topological_inventory, 'ALL_TENANTS', True)
+        account = dict(
+            account_id=1,
+            b64_identity=b'eyJpZGVudGl0eSI6IHsiYWNjb3VudF9udW1iZXIiOiAxfX0='
+        )
 
-    def test_single_account(self):
-        """TBD."""
+        mock_collector = mocker.patch.object(
+            topological_inventory, 'topological_inventory_data',
+            return_value=0
+        )
+        mock_redis = mocker.patch.object(utils, 'set_processed')
+        mock_response = mocker.Mock()
+        mock_retryable = mocker.patch.object(
+            utils, 'retryable', return_value=mock_response
+        )
+        mock_response.json.return_value = [
+            dict(external_tenant=i) for i in range(10)
+        ]
+
+        topological_inventory.worker('', 'source_id', 'dest', account)
+
+        assert mock_collector.call_count == 10
+        mock_redis.assert_has_calls([mocker.call(i) for i in range(10)])
+        mock_retryable.assert_called_once_with(
+            'get', topological_inventory.TENANTS_URL, headers=mocker.ANY
+        )
+
+    def test_single_account(self, monkeypatch, mocker):
+        """Single tenant is collected based on `acct_info`."""
+        monkeypatch.setattr(topological_inventory, 'ALL_TENANTS', False)
+        account = dict(
+            account_id=1,
+            b64_identity=b'eyJpZGVudGl0eSI6IHsiYWNjb3VudF9udW1iZXIiOiAxfX0='
+        )
+
+        mock_collector = mocker.patch.object(
+            topological_inventory, 'topological_inventory_data',
+            return_value=0
+        )
+        mock_redis = mocker.patch.object(utils, 'set_processed')
+
+        topological_inventory.worker('', 'source_id', 'dest', account)
+
+        mock_collector.assert_called_once_with(
+            '', 'source_id', 'dest',
+            {'x-rh-identity': account['b64_identity']}, mocker.ANY
+        )
+        mock_redis.assert_called_once_with(1)
 
 
 class TestTopologicalInventoryData:
