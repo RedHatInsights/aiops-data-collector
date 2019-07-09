@@ -481,6 +481,22 @@ class TestTopologicalInventoryData:
         assert size == 0
         self.retryable.assert_not_called()
 
+    def test_failed_retry(self, monkeypatch):
+        """Should not pass data if collection fails due to exception."""
+        monkeypatch.setattr(topological_inventory, 'APP_CONFIG', ['a'])
+
+        self.query_main.side_effect = utils.RetryFailedError()
+
+        topological_inventory.topological_inventory_data(
+            None, 'stub_id', 'dest', {}, self.thread
+        )
+
+        self.query_main.assert_called_once_with(
+            dict(main_collection='a'), headers={}
+        )
+        self.query_sub.assert_not_called()
+        self.retryable.assert_not_called()
+
 
 class TestTenantHeaderInfo:
     """Test suite for tenant_header_info."""
