@@ -7,6 +7,8 @@ from flask import Flask, jsonify, request
 from flask.logging import default_handler
 from jinja2 import Template
 import yaml
+import requests
+from urllib3.exceptions import NewConnectionError
 
 import collector
 import workers
@@ -38,6 +40,25 @@ if PATH_PREFIX:
     ROUTE_PREFIX = f'/{PATH_PREFIX}/{APP_NAME}'
 
 
+def ping_redis():
+    """Ping Redis."""
+    if not collector.utils.ping_redis():
+        APP.logger.debug('Redis not available')
+        return False
+    return True
+
+
+def ping_next_service():
+    """Ping Next Service."""
+    next_service = os.environ.get('NEXT_SERVICE_URL')
+    try:
+        collector.utils.retryable('get', f'{next_service}/ping')
+    except (requests.HTTPError, NewConnectionError):
+        APP.logger.debug('Next Service not available')
+        return False
+    return True
+
+
 @APP.route(f'{ROUTE_PREFIX}/', methods=['GET'], strict_slashes=False)
 def get_root():
     """Root Endpoint for 3scale."""
@@ -45,7 +66,7 @@ def get_root():
         return_code = 500
         status = 'Error'
         message = 'No worker set'
-    elif not collector.utils.ping_redis():
+    elif not (ping_next_service() and ping_redis()):
         return_code = 500
         status = 'Error'
         message = 'Required service not operational'
