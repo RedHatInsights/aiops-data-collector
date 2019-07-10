@@ -14,7 +14,8 @@ def patch_env(monkeypatch):
         TOPOLOGICAL_INVENTORY_HOST='http://topological:8080',
         TOPOLOGICAL_INVENTORY_PATH='api/topo/vX',
         HOST_INVENTORY_HOST='http://inventory:8080',
-        HOST_INVENTORY_PATH='api/inventory/vX'
+        HOST_INVENTORY_PATH='api/inventory/vX',
+        NEXT_SERVICE_URL='http://nextservice:8080'
     )
     for item, value in setenv.items():
         monkeypatch.setenv(item, value)
