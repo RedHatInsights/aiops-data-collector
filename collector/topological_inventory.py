@@ -1,7 +1,7 @@
 import logging
 import os
 from threading import current_thread
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 
 import base64
 import json
@@ -54,6 +54,28 @@ def _load_yaml(filename: str) -> dict:
 APP_CONFIG = _load_yaml(f'{CFG_DIR}/topological_app_config.yml').get(APP_NAME)
 QUERIES = _load_yaml(f'{CFG_DIR}/topological_queries.yml')
 
+Tenant = namedtuple('Tenant', ('account_number', 'headers'))
+
+
+def create_tenant(account_number: str):
+    """Create Tenant tuple with account number and headers.
+
+    Parameters
+    ----------
+    account_number (str)
+        Numerical account number represented as a string
+
+    Returns
+    -------
+    Tenant
+        A namedtuple object with tenant properties
+
+    """
+    rh_identity = dict(identity=dict(account_number=account_number))
+    b64_identity = base64.b64encode(json.dumps(rh_identity).encode())
+
+    return Tenant(account_number, {'x-rh-identity': b64_identity})
+
 
 def _update_fk(page_data: list, fk_name: str, fk_id: str) -> dict:
     """Mutate Rows with Foreign key info.
@@ -83,8 +105,7 @@ def _update_fk(page_data: list, fk_name: str, fk_id: str) -> dict:
     return page_data
 
 
-def _collect_data(host: dict, url: str, fk_name: str = None,
-                  fk_id: str = None, headers: dict = None) -> dict:
+def _collect_data(host: dict, url: str, headers: dict = None) -> dict:
     """Aggregate data from all pages.
 
     Returns data aggregated from all pages together
@@ -95,10 +116,8 @@ def _collect_data(host: dict, url: str, fk_name: str = None,
         Service host
     url (str)
         URI to the first page, where to start the traverse
-    fk_name (str)
-        Foreign key column to update if needed
-    fk_id (str)
-        Foreign key value to update if needed
+    headers (dict)
+        HTTP Headers used to perform requests with
 
     Returns
     -------
@@ -131,7 +150,7 @@ def _collect_data(host: dict, url: str, fk_name: str = None,
         prometheus_metrics.METRICS['get_successes'].inc()
         all_data += resp['data']
 
-    return _update_fk(all_data, fk_name, fk_id)
+    return all_data
 
 
 def _query_main_collection(entity: dict, headers: dict = None) -> dict:
@@ -141,6 +160,8 @@ def _query_main_collection(entity: dict, headers: dict = None) -> dict:
     ----------
     entity (dict)
         A query_spec entity to download
+    headers (dict)
+        HTTP Headers used to perform requests with
 
     Returns
     -------
@@ -169,8 +190,8 @@ def _query_sub_collection(entity: dict, data: dict,
         A query_spec entity to download
     data (dict)
         Already available data for reference
-    foreign_key (str)
-        Foreign key column to be populated in sub-collection records
+    headers (dict)
+        HTTP Headers used to perform requests with
 
     Returns
     -------
@@ -191,8 +212,9 @@ def _query_sub_collection(entity: dict, data: dict,
     url = f'{main_collection}/{{}}/{sub_collection}'
     all_data = []
     for item in data[main_collection]:
-        all_data += _collect_data(service, url.format(item['id']),
-                                  foreign_key, item['id'], headers=headers)
+        partial_data = _collect_data(service, url.format(item['id']),
+                                     headers=headers)
+        all_data += _update_fk(partial_data, foreign_key, item['id'])
     return all_data
 
 
@@ -215,35 +237,26 @@ def worker(_: str, source_id: str, dest: str, acct_info: dict) -> None:
     thread = current_thread()
     LOGGER.debug('%s: Worker started', thread.name)
 
-    b64_identity = acct_info['b64_identity']
-    account_id = acct_info['account_id']
-    headers = {"x-rh-identity": b64_identity}
-
     if ALL_TENANTS:
         prometheus_metrics.METRICS['gets'].inc()
+        headers = {"x-rh-identity": acct_info['b64_identity']}
         resp = utils.retryable('get', TENANTS_URL, headers=headers)
         prometheus_metrics.METRICS['get_successes'].inc()
-        tenants_headers = \
-            [tenant_header_info(t["external_tenant"]) for t in resp.json()]
 
-        LOGGER.info('Fetching data for ALL(%s) Tenants', len(tenants_headers))
-
-        for tenant_header in tenants_headers:
-            LOGGER.debug('%s: ---START Account# %s---',
-                         thread.name, tenant_header['acct_no'])
-            headers = tenant_header['headers']
-            data_size = topological_inventory_data(_, source_id, dest,
-                                                   headers, thread)
-            prometheus_metrics.METRICS['data_size'].observe(data_size)
-            utils.set_processed(tenant_header['acct_no'])
-            LOGGER.debug('%s: ---END Account# %s---',
-                         thread.name, tenant_header['acct_no'])
+        tenants = [create_tenant(t["external_tenant"]) for t in resp.json()]
+        LOGGER.info('Fetching data for ALL(%s) Tenants', len(tenants))
     else:
+        tenants = [create_tenant(acct_info['account_id'])]
         LOGGER.info('Fetching data for current Tenant')
-        data_size = topological_inventory_data(_, source_id, dest,
-                                               headers, thread)
-        prometheus_metrics.METRICS['data_size'].observe(data_size)
-        utils.set_processed(account_id)
+
+    for tenant in tenants:
+        LOGGER.debug('%s: ---START Account# %s---',
+                     thread.name, tenant.account_number)
+        topological_inventory_data(_, source_id, dest, tenant.headers, thread)
+
+        utils.set_processed(tenant.account_number)
+        LOGGER.debug('%s: ---END Account# %s---',
+                     thread.name, tenant.account_number)
 
     LOGGER.debug('%s: Done, exiting', thread.name)
 
@@ -279,7 +292,7 @@ def topological_inventory_data(
 
     if not APP_CONFIG:
         LOGGER.error('%s: No queries specified', thread.name)
-        return 0
+        return
 
     for entity in APP_CONFIG:
         query_spec = QUERIES[entity]
@@ -293,27 +306,23 @@ def topological_inventory_data(
                 )
             else:
                 all_data = _query_main_collection(query_spec, headers=headers)
-        except utils.RetryFailedError as exception:
+            if not all_data:
+                raise utils.DataMissingError('Insufficient data.')
+
+        except (utils.RetryFailedError, utils.DataMissingError) as exception:
             prometheus_metrics.METRICS['get_errors'].inc()
             LOGGER.error(
                 '%s: Unable to fetch source data for "%s": %s',
                 thread.name, source_id, exception
             )
-            return 0
+            return
 
-        LOGGER.info(
+        LOGGER.debug(
             '%s: %s: %s\t%s',
             thread.name, source_id, entity, len(all_data)
         )
 
-        if all_data:
-            data['data'][entity] = all_data
-        else:
-            LOGGER.debug(
-                '%s: Inadequate Topological Inventory data for this account.',
-                thread.name
-            )
-            return 0
+        data['data'][entity] = all_data
 
     # Pass to next service
     prometheus_metrics.METRICS['posts'].inc()
@@ -327,11 +336,7 @@ def topological_inventory_data(
         )
         prometheus_metrics.METRICS['post_errors'].inc()
 
-    return get_deep_size(data['data'])
+    data_size = get_deep_size(data['data'])
+    prometheus_metrics.METRICS['data_size'].observe(data_size)
 
-
-def tenant_header_info(acct_no):
-    """Return a dict containing Account No. and it's b64 Identity header."""
-    rh_identity = dict(identity=dict(account_number=acct_no))
-    b64_identity = base64.b64encode(json.dumps(rh_identity).encode())
-    return {'acct_no': acct_no, 'headers': {'x-rh-identity': b64_identity}}
+    return
