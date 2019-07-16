@@ -41,6 +41,10 @@ def set_processed(key: str) -> None:
     REDIS.set(key, 1, ex=PROCESS_WINDOW)
 
 
+class DataMissingError(Exception):
+    """No data collected exception."""
+
+
 class RetryFailedError(requests.HTTPError):
     """Exception raised when the HTTP retry fails.
 

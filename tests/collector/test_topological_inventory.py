@@ -208,8 +208,7 @@ class TestQuerySubCollection:
         topological_inventory._query_sub_collection(entity, data)
 
         mock.assert_called_once_with(
-            expected_service, mocker.ANY, mocker.ANY,
-            mocker.ANY, headers=mocker.ANY
+            expected_service, mocker.ANY, headers=mocker.ANY
         )
 
     def test_service_fallback(self, monkeypatch, mocker):
@@ -233,8 +232,7 @@ class TestQuerySubCollection:
         topological_inventory._query_sub_collection(entity, data)
 
         mock.assert_called_once_with(
-            dict(host='topological', path=''),
-            mocker.ANY, mocker.ANY, mocker.ANY, headers=mocker.ANY
+            dict(host='topological', path=''), mocker.ANY, headers=mocker.ANY
         )
 
     def test_pass_headers(self, mocker):
@@ -251,28 +249,28 @@ class TestQuerySubCollection:
         topological_inventory._query_sub_collection(entity, data, headers)
 
         mock.assert_called_once_with(
-            mocker.ANY, mocker.ANY, mocker.ANY, mocker.ANY,
-            headers={'header': 'value'}
+            mocker.ANY, mocker.ANY, headers={'header': 'value'}
         )
 
     def test_called_for_every_entry(self, mocker):
         """A subcollection should be collected for every main entry."""
         entity = dict(
-            main_collection='x', sub_collection='y', foreign_key='fk'
+            main_collection='x', sub_collection='y', foreign_key='fk_x'
         )
-        data = dict(x=[
-            {'id': 1, 'name': 'stub_object_1'},
-            {'id': 2, 'name': 'stub_object_2'},
-            {'id': 3, 'name': 'stub_object_3'},
-        ])
+        data = dict(x=[{'id': i, 'name': 'main_1'} for i in range(1, 4)])
 
         mock = mocker.patch.object(topological_inventory, '_collect_data')
-        mock.side_effect = lambda _, _1, _2, item_id, **_kwargs: [item_id]
+        mock.side_effect = [
+            [{'id': i, 'name': f'sub_{i}'}] for i in range(4, 7)
+        ]
 
         output = topological_inventory._query_sub_collection(entity, data)
 
         assert mock.call_count == 3
-        assert output == [1, 2, 3]
+        print(output)
+        assert output == [
+            {'id': i, 'name': f'sub_{i}', 'fk_x': i-3} for i in range(4, 7)
+        ]
 
     @pytest.mark.parametrize('entity', [
         dict(sub_collection='y', foreign_key='fk'),
@@ -297,9 +295,7 @@ class TestQuerySubCollection:
 
         topological_inventory._query_sub_collection(entity, data)
 
-        mock.assert_called_once_with(
-            mocker.ANY, 'x/1/y', mocker.ANY, mocker.ANY, headers=mocker.ANY
-        )
+        mock.assert_called_once_with(mocker.ANY, 'x/1/y', headers=mocker.ANY)
 
 
 class TestWorker:
@@ -393,12 +389,11 @@ class TestTopologicalInventoryData:
         """Should not call next service if no queries are specified."""
         monkeypatch.setattr(topological_inventory, 'APP_CONFIG', [])
 
-        size = topological_inventory.topological_inventory_data(
+        topological_inventory.topological_inventory_data(
             None, 'stub_id', 'dest', {}, self.thread
         )
 
         self.retryable.assert_not_called()
-        assert size == 0
 
     def test_invalid_collection(self, monkeypatch):
         """Should raise if collection is not present in QUERIES."""
@@ -473,12 +468,11 @@ class TestTopologicalInventoryData:
         self.query_main.side_effect = main
         self.query_sub.side_effect = sub
 
-        size = topological_inventory.topological_inventory_data(
+        topological_inventory.topological_inventory_data(
             None, 'stub_id', 'dest', {}, self.thread
         )
         assert self.query_main.call_count == calls[0]
         assert self.query_sub.call_count == calls[1]
-        assert size == 0
         self.retryable.assert_not_called()
 
     def test_failed_retry(self, monkeypatch):
@@ -498,34 +492,34 @@ class TestTopologicalInventoryData:
         self.retryable.assert_not_called()
 
 
-class TestTenantHeaderInfo:
-    """Test suite for tenant_header_info."""
+class TestTenant:
+    """Test suite for create_tenant."""
 
     def test_header_structure(self):
         """Test presence of important keys in output dict."""
-        info = topological_inventory.tenant_header_info(None)
+        info = topological_inventory.create_tenant(None)
 
-        assert 'acct_no' in info.keys()
-        assert 'headers' in info.keys()
-        assert 'x-rh-identity' in info['headers'].keys()
+        assert 'account_number' in info._fields
+        assert 'headers' in info._fields
+        assert 'x-rh-identity' in info.headers.keys()
 
     def test_acct_no(self):
         """Test passing of account number."""
-        info = topological_inventory.tenant_header_info(10)
+        info = topological_inventory.create_tenant(10)
 
-        assert info['acct_no'] == 10
+        assert info.account_number == 10
 
     def test_base64_identity_value(self):
         """Test if base64 encoded string matches for the value."""
         b64 = b'eyJpZGVudGl0eSI6IHsiYWNjb3VudF9udW1iZXIiOiA0Mn19'
-        info = topological_inventory.tenant_header_info(42)
+        info = topological_inventory.create_tenant(42)
 
-        assert b64 == info['headers']['x-rh-identity']
+        assert b64 == info.headers['x-rh-identity']
 
     def test_base64_identity_structure(self):
         """Test if base64 encoded string contains expected properties."""
-        info = topological_inventory.tenant_header_info(42)
-        b64_identity = info['headers']['x-rh-identity']
+        info = topological_inventory.create_tenant(42)
+        b64_identity = info.headers['x-rh-identity']
         identity = json.loads(base64.b64decode(b64_identity))
 
         assert 'identity' in identity.keys()
