@@ -314,20 +314,20 @@ class TestWorker:
             return_value=0
         )
         mock_redis = mocker.patch.object(utils, 'set_processed')
-        mock_response = mocker.Mock()
-        mock_retryable = mocker.patch.object(
-            utils, 'retryable', return_value=mock_response
+        mock_collect_data = mocker.patch.object(
+            topological_inventory, '_collect_data',
+            return_value=[
+                dict(external_tenant=i) for i in range(10)
+            ]
         )
-        mock_response.json.return_value = [
-            dict(external_tenant=i) for i in range(10)
-        ]
 
         topological_inventory.worker('', 'source_id', 'dest', account)
 
         assert mock_collector.call_count == 10
         mock_redis.assert_has_calls([mocker.call(i) for i in range(10)])
-        mock_retryable.assert_called_once_with(
-            'get', topological_inventory.TENANTS_URL, headers=mocker.ANY
+        mock_collect_data.assert_called_once_with(
+            topological_inventory.SERVICES_URL['TOPOLOGICAL_INTERNAL'],
+            'tenants', headers=mocker.ANY
         )
 
     def test_single_account(self, monkeypatch, mocker):
