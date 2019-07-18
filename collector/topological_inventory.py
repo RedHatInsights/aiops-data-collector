@@ -10,9 +10,10 @@ from objsize import get_deep_size
 
 import prometheus_metrics
 from . import utils
-from .env import (APP_NAME, TENANTS_URL, ALL_TENANTS,
+from .env import (APP_NAME, ALL_TENANTS,
                   SOURCES_HOST, SOURCES_PATH,
-                  TOPOLOGICAL_INVENTORY_HOST, TOPOLOGICAL_INVENTORY_PATH)
+                  TOPOLOGICAL_INVENTORY_HOST, TOPOLOGICAL_INVENTORY_PATH,
+                  TOPOLOGICAL_INTERNAL_PATH)
 
 LOGGER = logging.getLogger()
 CFG_DIR = '{}/configs'.format(os.path.dirname(__file__))
@@ -26,6 +27,10 @@ SERVICES_URL = defaultdict(
     SOURCES=dict(
         host=SOURCES_HOST,
         path=SOURCES_PATH
+    ),
+    TOPOLOGICAL_INTERNAL=dict(
+        host=TOPOLOGICAL_INVENTORY_HOST,
+        path=TOPOLOGICAL_INTERNAL_PATH
     )
 )
 
@@ -238,12 +243,12 @@ def worker(_: str, source_id: str, dest: str, acct_info: dict) -> None:
     LOGGER.debug('%s: Worker started', thread.name)
 
     if ALL_TENANTS:
-        prometheus_metrics.METRICS['gets'].inc()
-        headers = {"x-rh-identity": acct_info['b64_identity']}
-        resp = utils.retryable('get', TENANTS_URL, headers=headers)
-        prometheus_metrics.METRICS['get_successes'].inc()
+        resp = _collect_data(
+            SERVICES_URL['TOPOLOGICAL_INTERNAL'], 'tenants',
+            headers={"x-rh-identity": acct_info['b64_identity']}
+        )
 
-        tenants = [create_tenant(t["external_tenant"]) for t in resp.json()]
+        tenants = [create_tenant(t["external_tenant"]) for t in resp]
         LOGGER.info('Fetching data for ALL(%s) Tenants', len(tenants))
     else:
         tenants = [create_tenant(acct_info['account_id'])]

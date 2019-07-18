@@ -1,6 +1,6 @@
 import os
 
-TENANTS_URL = os.environ.get('TENANTS_URL')
+TOPOLOGICAL_INTERNAL_PATH = os.environ.get('TOPOLOGICAL_INTERNAL_PATH')
 ALL_TENANTS = os.environ.get('ALL_TENANTS', 'true').lower() in ['true', 'y']
 TOPOLOGICAL_INVENTORY_HOST = os.environ.get('TOPOLOGICAL_INVENTORY_HOST')
 TOPOLOGICAL_INVENTORY_PATH = os.environ.get('TOPOLOGICAL_INVENTORY_PATH')
