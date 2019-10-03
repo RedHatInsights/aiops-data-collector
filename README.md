@@ -1,8 +1,9 @@
-# AI-Ops: Data collector microservice
+# ⛔️ DEPRECATED: AI-Ops: Data collector microservice
 
 [![Build Status](https://travis-ci.org/ManageIQ/aiops-data-collector.svg?branch=master)](https://travis-ci.org/ManageIQ/aiops-data-collector)
 [![codecov](https://codecov.io/gh/ManageIQ/aiops-data-collector/branch/master/graph/badge.svg)](https://codecov.io/gh/ManageIQ/aiops-data-collector)
 [![License](https://img.shields.io/badge/license-APACHE2-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
+[![No Maintenance Intended](http://unmaintained.tech/badge.svg)](http://unmaintained.tech/)
 
 Thin Flask server collecting data from S3 on demand and streaming it through the pipeline
 
